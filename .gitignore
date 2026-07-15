@@ -1,0 +1,11 @@
+# Paquetes de distribución
+*.zip
+*.tar.gz
+
+# Schemas compilados (se generan durante la instalación)
+extension/schemas/gschemas.compiled
+
+# Archivos del sistema
+.DS_Store
+*~
+*.swp

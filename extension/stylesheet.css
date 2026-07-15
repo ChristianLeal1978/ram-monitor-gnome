@@ -1,0 +1,14 @@
+/*
+ * RAM Monitor — stylesheet.css
+ */
+
+.ram-monitor-bar {
+    font-family: monospace;
+    font-size: 11px;
+    letter-spacing: 0px;
+}
+
+.ram-monitor-info {
+    font-size: 12px;
+    font-weight: bold;
+}
