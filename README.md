@@ -41,7 +41,7 @@ Al iniciar sesión de nuevo, la barra de RAM aparecerá automáticamente en la b
 ### Instalación desde el repositorio
 
 ```bash
-git clone https://github.com/cleal/ram-monitor-gnome.git
+git clone https://github.com/ChristianLeal1978/ram-monitor-gnome.git
 cd ram-monitor-gnome
 bash install.sh
 gnome-session-quit --logout
