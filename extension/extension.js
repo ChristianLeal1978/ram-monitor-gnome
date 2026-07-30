@@ -180,7 +180,6 @@ class RamIndicator extends PanelMenu.Button {
         this._lastMem         = null;
         this._procRequestId   = 0;
         this._pendingSources  = new Set();
-        this._closeTimeoutId  = null;
         this._destroyed       = false;
 
         // ── Widget en la barra superior ──
@@ -455,10 +454,6 @@ class RamIndicator extends PanelMenu.Button {
         if (this._timerId) {
             GLib.source_remove(this._timerId);
             this._timerId = null;
-        }
-        if (this._closeTimeoutId) {
-            GLib.source_remove(this._closeTimeoutId);
-            this._closeTimeoutId = null;
         }
         for (const id of this._pendingSources)
             GLib.source_remove(id);
