@@ -146,14 +146,39 @@ function fmtGb(gb) {
     return gb >= 10 ? `${Math.round(gb)}` : gb.toFixed(1);
 }
 
-function fmtProcMem(kb) {
-    const mb = kb / 1024;
-    if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
-    return `${Math.round(mb)} MB`;
-}
-
 function fmtPct(pct) {
     return pct >= 10 ? `${Math.round(pct)}%` : `${pct.toFixed(1)}%`;
+}
+
+// Nombres de proceso (`comm`, truncado a 15 caracteres por `ps`) → nombre
+// de la app tal como la conoce el usuario. Lo que no está en el mapa se
+// formatea genéricamente (guiones → espacios, may. inicial) en vez de
+// mostrarse en kebab-case crudo.
+const FRIENDLY_PROCESS_NAMES = {
+    'vivaldi-bin'      : 'Vivaldi',
+    'claude-desktop'   : 'Claude Desktop',
+    'spotify'          : 'Spotify',
+    'rambox'           : 'Rambox',
+    'gnome-shell'      : 'GNOME Shell',
+    'gnome-software'   : 'GNOME Software',
+    'claude'           : 'Claude',
+    'node'             : 'Node',
+    'gjs'              : 'GJS',
+    'systemd-journal'  : 'systemd-journald',
+    'xdg-desktop-por'  : 'xdg-desktop-portal',
+    'ibus-engine-tb'   : 'IBus',
+    'ibus-x11'         : 'IBus',
+    'mutter-x11-fram'  : 'Mutter',
+    'abrt-dump-journ'  : 'ABRT',
+    'evolution-alarm'  : 'Evolution',
+    'evolution-sourc'  : 'Evolution',
+    'dnf5daemon-serv'  : 'DNF5',
+    'python3'          : 'Python',
+};
+
+function friendlyProcessName(name) {
+    if (FRIENDLY_PROCESS_NAMES[name]) return FRIENDLY_PROCESS_NAMES[name];
+    return name.replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
 function makeBar(pct) {
@@ -397,17 +422,16 @@ class RamIndicator extends PanelMenu.Button {
         // el clic derecho (o el hover) abre este menú, un primer clic
         // despliega la confirmación y un segundo clic (sobre el ítem de
         // confirmación) ejecuta el kill de todos los PID del grupo.
-        const count      = group.pids.length;
-        const nameLabel  = count > 1 ? `${group.name} ×${count}` : group.name;
-        const pctLabel   = this._fmtPctOfTotal(group.kb);
-        const memLabel   = pctLabel ? `${fmtProcMem(group.kb)} · ${pctLabel}` : fmtProcMem(group.kb);
+        const count       = group.pids.length;
+        const displayName = friendlyProcessName(group.name);
+        const pctLabel    = this._fmtPctOfTotal(group.kb);
 
         const item = new PopupMenu.PopupSubMenuMenuItem(
-            `  ${nameLabel}  —  ${memLabel}`);
+            pctLabel ? `  ${displayName}  —  ${pctLabel}` : `  ${displayName}`);
 
         const confirmText = count > 1
-            ? `  Terminar ${count} procesos "${group.name}" (confirmar)`
-            : `  Terminar "${group.name}" (confirmar)`;
+            ? `  Terminar ${count} procesos de "${displayName}" (confirmar)`
+            : `  Terminar "${displayName}" (confirmar)`;
         const confirmItem = new PopupMenu.PopupMenuItem(confirmText);
         confirmItem.label.style = 'color: #f38ba8;';
         confirmItem.connect('activate', () => this._killProcessGroup(group.pids, group.name));
