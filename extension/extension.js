@@ -227,13 +227,13 @@ class RamIndicator extends PanelMenu.Button {
         });
 
         // ── Pasar el mouse sobre el ícono también abre el listado de
-        // procesos, sin necesidad de clic derecho. Se cierra solo cuando
-        // el puntero sale tanto del ícono como del menú desplegado.
-        this.menu.actor.track_hover = true;
+        // procesos, sin necesidad de clic derecho. El cierre queda a cargo
+        // de los mecanismos propios de GNOME (clic afuera, Escape, o clic
+        // de nuevo en el ícono): un cierre automático por "salida de hover"
+        // resultó poco fiable, porque el menú recién abierto no queda
+        // marcado como hovered hasta el primer movimiento del mouse sobre
+        // él, así que se cerraba solo apenas se abría.
         this.connect('notify::hover', () => this._onIndicatorHoverChanged());
-        this.menu.actor.connect('notify::hover', () => {
-            if (!this.menu.actor.hover) this._scheduleAutoClose();
-        });
 
         // ── Menú desplegable (contenido inicial: detalle de RAM) ──
         this._buildRamMenu();
@@ -293,31 +293,15 @@ class RamIndicator extends PanelMenu.Button {
     }
 
     _onIndicatorHoverChanged() {
-        if (this.hover) {
-            if (!this.menu.isOpen) {
-                this._menuMode = 'processes';
-                this.menu.open();
-            } else if (this._menuMode !== 'processes') {
-                this._menuMode = 'processes';
-                this._populateMenu();
-            }
-        } else {
-            this._scheduleAutoClose();
-        }
-    }
+        if (!this.hover) return;
 
-    // Cierra el menú de procesos solo cuando el puntero ya no está ni sobre
-    // el ícono ni sobre el menú (deja un margen para cruzar el hueco entre
-    // ambos al bajar el mouse).
-    _scheduleAutoClose() {
-        if (this._closeTimeoutId) return;
-        this._closeTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 200, () => {
-            this._closeTimeoutId = null;
-            if (!this.hover && !this.menu.actor.hover &&
-                this.menu.isOpen && this._menuMode === 'processes')
-                this.menu.close();
-            return GLib.SOURCE_REMOVE;
-        });
+        if (!this.menu.isOpen) {
+            this._menuMode = 'processes';
+            this.menu.open();
+        } else if (this._menuMode !== 'processes') {
+            this._menuMode = 'processes';
+            this._populateMenu();
+        }
     }
 
     // ── Menú: detalle de RAM ──
