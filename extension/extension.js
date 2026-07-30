@@ -63,17 +63,31 @@ function readMem() {
 }
 
 // ── Procesos: obtención vía `ps` (Gio.Subprocess, no bloqueante) ──────────
+// Se agrupan por nombre (comm) sumando su RSS: apps como Spotify o Electron
+// suelen abrir varios procesos con el mismo nombre, y verlos por separado
+// solo satura la lista sin aportar información útil.
 function parseProcesses(output) {
-    const procs = [];
+    const groups = new Map();
     for (const rawLine of output.split('\n')) {
         const m = rawLine.trim().match(/^(\d+)\s+(\S+)\s+(\d+)$/);
         if (!m) continue;
-        const kb = parseInt(m[3]);
-        if (kb < PROC_MIN_KB) continue;
-        procs.push({ pid: parseInt(m[1]), name: m[2], kb });
+        const pid  = parseInt(m[1]);
+        const name = m[2];
+        const kb   = parseInt(m[3]);
+
+        let g = groups.get(name);
+        if (!g) {
+            g = { name, pids: [], kb: 0 };
+            groups.set(name, g);
+        }
+        g.pids.push(pid);
+        g.kb += kb;
     }
-    // `ps --sort=-rss` ya entrega orden descendente; solo recortamos el top N.
-    return procs.slice(0, PROC_MAX_ITEMS);
+
+    return [...groups.values()]
+        .filter(g => g.kb >= PROC_MIN_KB)
+        .sort((a, b) => b.kb - a.kb)
+        .slice(0, PROC_MAX_ITEMS);
 }
 
 function getProcesses() {
@@ -138,6 +152,10 @@ function fmtProcMem(kb) {
     return `${Math.round(mb)} MB`;
 }
 
+function fmtPct(pct) {
+    return pct >= 10 ? `${Math.round(pct)}%` : `${pct.toFixed(1)}%`;
+}
+
 function makeBar(pct) {
     const filled = Math.round(Math.min(100, Math.max(0, pct)) / 100 * BAR_SEGS);
     return '█'.repeat(filled) + '░'.repeat(BAR_SEGS - filled);
@@ -154,12 +172,15 @@ const RamIndicator = GObject.registerClass(
 class RamIndicator extends PanelMenu.Button {
 
     _init() {
-        super._init(0.0, 'RAM Monitor');
+        // 0.5 → el menú se centra bajo el indicador (en vez de colgar hacia
+        // un lado, lo que lo sacaba de pantalla estando tan a la derecha).
+        super._init(0.5, 'RAM Monitor');
 
         this._menuMode        = 'ram';   // 'ram' | 'processes'
         this._lastMem         = null;
         this._procRequestId   = 0;
         this._pendingSources  = new Set();
+        this._closeTimeoutId  = null;
         this._destroyed       = false;
 
         // ── Widget en la barra superior ──
@@ -185,34 +206,33 @@ class RamIndicator extends PanelMenu.Button {
         // PanelMenu.Button trae un único Clutter.ClickGesture que abre el
         // menú con cualquier botón (required-button = 0). Lo desactivamos y
         // usamos dos gestos propios, uno por botón, cada uno fija el modo
-        // del menú *antes* de abrirlo para que open-state-changed sepa qué
-        // contenido construir.
+        // del menú antes de abrirlo (o de repoblarlo si ya estaba abierto
+        // en el otro modo) para que siempre muestre el contenido correcto.
         this._clickGesture?.set_enabled(false);
 
         this._leftClickGesture = new Clutter.ClickGesture();
         this._leftClickGesture.set_required_button(Clutter.BUTTON_PRIMARY);
         this._leftClickGesture.set_recognize_on_press(true);
-        this._leftClickGesture.connect('recognize', () => {
-            this._menuMode = 'ram';
-            this.menu.toggle();
-        });
+        this._leftClickGesture.connect('recognize', () => this._activateMode('ram'));
         this.add_action(this._leftClickGesture);
 
         this._rightClickGesture = new Clutter.ClickGesture();
         this._rightClickGesture.set_required_button(Clutter.BUTTON_SECONDARY);
         this._rightClickGesture.set_recognize_on_press(true);
-        this._rightClickGesture.connect('recognize', () => {
-            this._menuMode = 'processes';
-            this.menu.toggle();
-        });
+        this._rightClickGesture.connect('recognize', () => this._activateMode('processes'));
         this.add_action(this._rightClickGesture);
 
         this.menu.connect('open-state-changed', (_menu, open) => {
-            if (!open) return;
-            if (this._menuMode === 'processes')
-                this._openProcessMenu();
-            else if (!this._menuBar)
-                this._buildRamMenu();
+            if (open) this._populateMenu();
+        });
+
+        // ── Pasar el mouse sobre el ícono también abre el listado de
+        // procesos, sin necesidad de clic derecho. Se cierra solo cuando
+        // el puntero sale tanto del ícono como del menú desplegado.
+        this.menu.actor.track_hover = true;
+        this.connect('notify::hover', () => this._onIndicatorHoverChanged());
+        this.menu.actor.connect('notify::hover', () => {
+            if (!this.menu.actor.hover) this._scheduleAutoClose();
         });
 
         // ── Menú desplegable (contenido inicial: detalle de RAM) ──
@@ -250,6 +270,54 @@ class RamIndicator extends PanelMenu.Button {
 
         // ── Menú (solo si está mostrando el detalle de RAM) ──
         this._applyRamLabels(m);
+    }
+
+    // ── Apertura / cambio de modo del menú ──
+    _activateMode(mode) {
+        if (this.menu.isOpen && this._menuMode === mode) {
+            this.menu.close();
+            return;
+        }
+        this._menuMode = mode;
+        if (this.menu.isOpen)
+            this._populateMenu();   // ya abierto en el otro modo: solo repoblar
+        else
+            this.menu.open();       // dispara open-state-changed → _populateMenu()
+    }
+
+    _populateMenu() {
+        if (this._menuMode === 'processes')
+            this._openProcessMenu();
+        else if (!this._menuBar)
+            this._buildRamMenu();
+    }
+
+    _onIndicatorHoverChanged() {
+        if (this.hover) {
+            if (!this.menu.isOpen) {
+                this._menuMode = 'processes';
+                this.menu.open();
+            } else if (this._menuMode !== 'processes') {
+                this._menuMode = 'processes';
+                this._populateMenu();
+            }
+        } else {
+            this._scheduleAutoClose();
+        }
+    }
+
+    // Cierra el menú de procesos solo cuando el puntero ya no está ni sobre
+    // el ícono ni sobre el menú (deja un margen para cruzar el hueco entre
+    // ambos al bajar el mouse).
+    _scheduleAutoClose() {
+        if (this._closeTimeoutId) return;
+        this._closeTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 200, () => {
+            this._closeTimeoutId = null;
+            if (!this.hover && !this.menu.actor.hover &&
+                this.menu.isOpen && this._menuMode === 'processes')
+                this.menu.close();
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     // ── Menú: detalle de RAM ──
@@ -328,22 +396,38 @@ class RamIndicator extends PanelMenu.Button {
                 new PopupMenu.PopupMenuItem('  Sin procesos relevantes', { reactive: false }));
             return;
         }
-        for (const proc of procs)
-            this.menu.addMenuItem(this._buildProcessItem(proc));
+        for (const group of procs)
+            this.menu.addMenuItem(this._buildProcessItem(group));
     }
 
-    _buildProcessItem(proc) {
-        // PopupSubMenuMenuItem expande/colapsa sin cerrar el menú principal:
-        // el clic derecho abre este menú, un primer clic despliega la
-        // confirmación y un segundo clic (sobre el ítem de confirmación)
-        // ejecuta el kill.
-        const item = new PopupMenu.PopupSubMenuMenuItem(
-            `  ${proc.name}  —  ${fmtProcMem(proc.kb)}`);
+    // % de RAM que representa `kb` sobre el total del sistema (según la
+    // última lectura de /proc/meminfo). Cadena vacía si aún no hay dato.
+    _fmtPctOfTotal(kb) {
+        if (!this._lastMem) return '';
+        const totalKb = this._lastMem.total_gb * 1_048_576;
+        if (!totalKb) return '';
+        return fmtPct((kb / totalKb) * 100);
+    }
 
-        const confirmItem = new PopupMenu.PopupMenuItem(
-            `  Terminar "${proc.name}" (confirmar)`);
+    _buildProcessItem(group) {
+        // PopupSubMenuMenuItem expande/colapsa sin cerrar el menú principal:
+        // el clic derecho (o el hover) abre este menú, un primer clic
+        // despliega la confirmación y un segundo clic (sobre el ítem de
+        // confirmación) ejecuta el kill de todos los PID del grupo.
+        const count      = group.pids.length;
+        const nameLabel  = count > 1 ? `${group.name} ×${count}` : group.name;
+        const pctLabel   = this._fmtPctOfTotal(group.kb);
+        const memLabel   = pctLabel ? `${fmtProcMem(group.kb)} · ${pctLabel}` : fmtProcMem(group.kb);
+
+        const item = new PopupMenu.PopupSubMenuMenuItem(
+            `  ${nameLabel}  —  ${memLabel}`);
+
+        const confirmText = count > 1
+            ? `  Terminar ${count} procesos "${group.name}" (confirmar)`
+            : `  Terminar "${group.name}" (confirmar)`;
+        const confirmItem = new PopupMenu.PopupMenuItem(confirmText);
         confirmItem.label.style = 'color: #f38ba8;';
-        confirmItem.connect('activate', () => this._killProcess(proc.pid, proc.name));
+        confirmItem.connect('activate', () => this._killProcessGroup(group.pids, group.name));
         item.menu.addMenuItem(confirmItem);
 
         return item;
@@ -361,16 +445,24 @@ class RamIndicator extends PanelMenu.Button {
         });
     }
 
-    async _killProcess(pid, name) {
-        await sendSignal(pid, '-15');
+    async _killProcessGroup(pids, name) {
+        await Promise.all(pids.map(pid => sendSignal(pid, '-15')));
         await this._sleep(KILL_CHECK_MS);
-        if (this._destroyed || !isProcessAlive(pid)) return;
+        if (this._destroyed) return;
 
-        await sendSignal(pid, '-9');
+        let survivors = pids.filter(isProcessAlive);
+        if (survivors.length === 0) return;
+
+        await Promise.all(survivors.map(pid => sendSignal(pid, '-9')));
         await this._sleep(300);
         if (this._destroyed) return;
-        if (isProcessAlive(pid))
-            console.error(`[RAM Monitor] No se pudo terminar el proceso "${name}" (pid ${pid})`);
+
+        survivors = survivors.filter(isProcessAlive);
+        if (survivors.length > 0) {
+            console.error(
+                `[RAM Monitor] No se pudo terminar ${survivors.length} proceso(s) ` +
+                `de "${name}" (pids: ${survivors.join(', ')})`);
+        }
     }
 
     destroy() {
@@ -379,6 +471,10 @@ class RamIndicator extends PanelMenu.Button {
         if (this._timerId) {
             GLib.source_remove(this._timerId);
             this._timerId = null;
+        }
+        if (this._closeTimeoutId) {
+            GLib.source_remove(this._closeTimeoutId);
+            this._closeTimeoutId = null;
         }
         for (const id of this._pendingSources)
             GLib.source_remove(id);
