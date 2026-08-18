@@ -1,4 +1,4 @@
-# RAM Monitor — GNOME Shell Extension
+# Powerzoid Memory — GNOME Shell Extension
 
 Extensión para GNOME Shell que muestra el uso de RAM en tiempo real directamente en la barra superior del sistema, con indicador de color según el nivel de riesgo.
 
@@ -26,8 +26,8 @@ Extensión para GNOME Shell que muestra el uso de RAM en tiempo real directament
 
 ```bash
 # Descomprimir
-unzip -o ram-monitor-gnome.zip
-cd ram-monitor-extension
+unzip -o powerzoid-memory.zip
+cd powerzoid-memory
 
 # Instalar
 bash install.sh
@@ -41,8 +41,8 @@ Al iniciar sesión de nuevo, la barra de RAM aparecerá automáticamente en la b
 ### Instalación desde el repositorio
 
 ```bash
-git clone https://github.com/ChristianLeal1978/ram-monitor-gnome.git
-cd ram-monitor-gnome
+git clone https://github.com/ChristianLeal1978/powerzoid-memory.git
+cd powerzoid-memory
 bash install.sh
 gnome-session-quit --logout
 ```
@@ -50,8 +50,8 @@ gnome-session-quit --logout
 ## Desinstalar
 
 ```bash
-gnome-extensions disable ram-monitor@cleal.cl
-rm -rf ~/.local/share/gnome-shell/extensions/ram-monitor@cleal.cl
+gnome-extensions disable powerzoid-memory@cleal.cl
+rm -rf ~/.local/share/gnome-shell/extensions/powerzoid-memory@cleal.cl
 ```
 
 ## Cómo funciona

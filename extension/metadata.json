@@ -1,7 +1,7 @@
 {
-  "name": "RAM Monitor",
+  "name": "Powerzoid Memory",
   "description": "Muestra el uso de RAM en la barra superior con indicador de color.",
-  "uuid": "ram-monitor@cleal.cl",
+  "uuid": "powerzoid-memory@cleal.cl",
   "shell-version": ["45", "46", "47", "48", "49", "50"],
   "version": 1
 }

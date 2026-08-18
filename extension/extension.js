@@ -1,5 +1,5 @@
 /**
- * RAM Monitor — extension.js
+ * Powerzoid Memory — extension.js
  * Muestra uso de RAM en la barra superior de GNOME Shell.
  * Lee /proc/meminfo directamente, sin dependencias externas.
  *
@@ -199,7 +199,7 @@ class RamIndicator extends PanelMenu.Button {
     _init() {
         // 0.5 → el menú se centra bajo el indicador (en vez de colgar hacia
         // un lado, lo que lo sacaba de pantalla estando tan a la derecha).
-        super._init(0.5, 'RAM Monitor');
+        super._init(0.5, 'Powerzoid Memory');
 
         this._menuMode        = 'ram';   // 'ram' | 'processes'
         this._lastMem         = null;
@@ -213,13 +213,13 @@ class RamIndicator extends PanelMenu.Button {
         // Barra de progreso (fuente monospace para que los bloques sean uniformes)
         this._barLabel = new St.Label({
             y_align    : Clutter.ActorAlign.CENTER,
-            style_class: 'ram-monitor-bar',
+            style_class: 'powerzoid-memory-bar',
         });
 
         // Texto "usado/total G"
         this._infoLabel = new St.Label({
             y_align    : Clutter.ActorAlign.CENTER,
-            style_class: 'ram-monitor-info',
+            style_class: 'powerzoid-memory-info',
         });
 
         box.add_child(this._barLabel);
@@ -467,7 +467,7 @@ class RamIndicator extends PanelMenu.Button {
         survivors = survivors.filter(isProcessAlive);
         if (survivors.length > 0) {
             console.error(
-                `[RAM Monitor] No se pudo terminar ${survivors.length} proceso(s) ` +
+                `[Powerzoid Memory] No se pudo terminar ${survivors.length} proceso(s) ` +
                 `de "${name}" (pids: ${survivors.join(', ')})`);
         }
     }
