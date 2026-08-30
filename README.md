@@ -76,6 +76,15 @@ Al hacer clic en el indicador se muestra el detalle:
   Total       16.0 GB
 ```
 
+## Configuración (clic derecho)
+
+Tanto el menú de RAM como el de procesos incluyen una entrada **⚙ Configuración** con:
+
+- **Posición en barra** — izquierda, centro o derecha
+- **Tamaño de letra** — aumentar, reducir o restablecer
+
+Al cerrar un proceso se pide confirmación mediante un diálogo modal centrado en pantalla (igual que "Apagar" en GNOME), así queda siempre visible y accesible sin importar el tamaño de la pantalla.
+
 ## Compatibilidad
 
 | GNOME Shell | Fedora  | Estado |

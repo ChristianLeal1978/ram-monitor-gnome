@@ -20,6 +20,7 @@ import { Extension }    from 'resource:///org/gnome/shell/extensions/extension.j
 import * as PanelMenu   from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu   from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import * as Main        from 'resource:///org/gnome/shell/ui/main.js';
+import * as ModalDialog from 'resource:///org/gnome/shell/ui/modalDialog.js';
 
 // ── Configuración ──────────────────────────────────────────────────────────
 const REFRESH_MS  = 3000;   // actualizar cada 3 segundos
@@ -33,6 +34,16 @@ const DANGER_PCT  = 85;     // amarillo → rojo
 const PROC_MIN_KB    = 10 * 1024;  // ocultar procesos con < 10 MB de RSS
 const PROC_MAX_ITEMS = 20;         // tope de procesos listados
 const KILL_CHECK_MS  = 1500;       // espera tras SIGTERM antes de verificar
+
+// Posición en barra y tamaño de letra (mismo patrón que el resto de Powerzoid)
+const VALID_ALIGNS      = ['left', 'center', 'right'];
+const DEFAULT_FONT_SIZE = 12;
+const MIN_FONT_SIZE     = 8;
+const MAX_FONT_SIZE     = 20;
+
+const CONFIG_DIR      = `${GLib.get_home_dir()}/.config/powerzoid-memory`;
+const POSITION_PATH   = `${CONFIG_DIR}/panel-position`;
+const FONT_SIZE_PATH  = `${CONFIG_DIR}/font-size`;
 
 // ── Lectura de /proc/meminfo ───────────────────────────────────────────────
 function readMem() {
@@ -140,6 +151,36 @@ function isProcessAlive(pid) {
     return GLib.file_test(`/proc/${pid}`, GLib.FileTest.EXISTS);
 }
 
+// Confirmación de cierre de proceso vía diálogo modal (el mismo mecanismo
+// que usa GNOME para "Apagar"/"Cerrar sesión"): queda siempre centrado y
+// visible sin importar cuán chica sea la pantalla, a diferencia del
+// submenú expandible que usábamos antes, cuyo ítem de confirmación podía
+// quedar fuera del área visible/desplazable en pantallas pequeñas.
+function confirmKillDialog(text) {
+    return new Promise(resolve => {
+        const dialog = new ModalDialog.ModalDialog({ destroyOnClose: true });
+
+        const label = new St.Label({ text, style: 'padding: 12px 4px; max-width: 320px;' });
+        label.clutter_text.set_line_wrap(true);
+        dialog.contentLayout.add_child(label);
+
+        let resolved = false;
+        const finish = result => {
+            if (resolved) return;
+            resolved = true;
+            dialog.close();
+            resolve(result);
+        };
+
+        dialog.setButtons([
+            { label: 'Cancelar', action: () => finish(false), key: Clutter.KEY_Escape },
+            { label: 'Terminar',  action: () => finish(true),  default: true },
+        ]);
+
+        dialog.open();
+    });
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 function fmtGb(gb) {
     // Sin decimales si ≥ 10 GB, un decimal si < 10 GB
@@ -196,10 +237,16 @@ function colorFor(pct) {
 const RamIndicator = GObject.registerClass(
 class RamIndicator extends PanelMenu.Button {
 
-    _init() {
+    _init(extension, initialAlign = 'right', initialFontSize = DEFAULT_FONT_SIZE) {
         // 0.5 → el menú se centra bajo el indicador (en vez de colgar hacia
         // un lado, lo que lo sacaba de pantalla estando tan a la derecha).
         super._init(0.5, 'Powerzoid Memory');
+
+        this._ext             = extension;
+        this._currentAlign    = initialAlign;
+        this._fontSize         = initialFontSize;
+        this._fontSizeItem    = null;
+        this._alignItems      = {};
 
         this._menuMode        = 'ram';   // 'ram' | 'processes'
         this._lastMem         = null;
@@ -279,21 +326,25 @@ class RamIndicator extends PanelMenu.Button {
             return;
         }
 
-        const color = colorFor(m.pct);
         const bar   = makeBar(m.pct);
         const used  = fmtGb(m.used_gb);
         const total = fmtGb(m.total_gb);
 
         // ── Panel ──
         this._barLabel.set_text(bar);
-        this._barLabel.set_style(
-            `color: ${color}; font-family: monospace; letter-spacing: 0px;`
-        );
         this._infoLabel.set_text(` ${used}/${total}G`);
-        this._infoLabel.set_style(`color: ${color};`);
+        this._applyPanelStyle(m);
 
         // ── Menú (solo si está mostrando el detalle de RAM) ──
         this._applyRamLabels(m);
+    }
+
+    _applyPanelStyle(m) {
+        const color = colorFor(m.pct);
+        this._barLabel.set_style(
+            `color: ${color}; font-family: monospace; letter-spacing: 0px; font-size: ${this._fontSize}px;`
+        );
+        this._infoLabel.set_style(`color: ${color}; font-size: ${this._fontSize}px;`);
     }
 
     // ── Apertura / cambio de modo del menú ──
@@ -328,6 +379,91 @@ class RamIndicator extends PanelMenu.Button {
         }
     }
 
+    // ── Menú: alineación y tamaño de letra (mismo patrón que el resto de
+    // Powerzoid) ──
+    _addConfigItem() {
+        const configItem = new PopupMenu.PopupSubMenuMenuItem('⚙  Configuración');
+        this.menu.addMenuItem(configItem);
+
+        this._alignItems = {};
+        [
+            ['← Alinear a la izquierda', 'left'],
+            ['↔ Alinear al centro',       'center'],
+            ['→ Alinear a la derecha',    'right'],
+        ].forEach(([label, align]) => {
+            const item = new PopupMenu.PopupMenuItem(label);
+            this._alignItems[align] = item;
+            item.connect('activate', () => this._setAlignment(align));
+            configItem.menu.addMenuItem(item);
+        });
+        this._updateAlignMarks(this._currentAlign);
+
+        configItem.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+
+        this._fontSizeItem = new PopupMenu.PopupMenuItem(this._fontSizeLabel(), { reactive: false });
+        this._fontSizeItem.label.set_style('color: #aaa; font-style: italic;');
+        configItem.menu.addMenuItem(this._fontSizeItem);
+
+        const increaseItem = new PopupMenu.PopupMenuItem('A+   Aumentar letra');
+        increaseItem.connect('activate', () => this._changeFontSize(1));
+        configItem.menu.addMenuItem(increaseItem);
+
+        const decreaseItem = new PopupMenu.PopupMenuItem('A−   Reducir letra');
+        decreaseItem.connect('activate', () => this._changeFontSize(-1));
+        configItem.menu.addMenuItem(decreaseItem);
+
+        const resetItem = new PopupMenu.PopupMenuItem('↺    Restablecer tamaño');
+        resetItem.connect('activate', () => {
+            this._fontSize = DEFAULT_FONT_SIZE;
+            this._applyFontSize();
+            this._ext.saveFontSize(this._fontSize);
+        });
+        configItem.menu.addMenuItem(resetItem);
+    }
+
+    _fontSizeLabel() {
+        return `Tamaño: ${this._fontSize} px`;
+    }
+
+    _changeFontSize(delta) {
+        this._fontSize = Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, this._fontSize + delta));
+        this._applyFontSize();
+        this._ext.saveFontSize(this._fontSize);
+    }
+
+    _applyFontSize() {
+        if (this._lastMem) this._applyPanelStyle(this._lastMem);
+        this._fontSizeItem?.label.set_text(this._fontSizeLabel());
+    }
+
+    _setAlignment(align) {
+        if (align === this._currentAlign) return;
+        this._ext.savePanelPosition(align);
+
+        // Reinicio completo de la extensión: evita un bug de rendering de
+        // GNOME Shell al reubicar actores directamente entre boxes del
+        // panel. disable/enable no pueden encadenarse en el mismo tick, así
+        // que se separan en dos ciclos de idle (mismo patrón que el resto
+        // de Powerzoid).
+        const uuid = this._ext.uuid;
+        GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+            Main.extensionManager.disableExtension(uuid);
+            GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+                Main.extensionManager.enableExtension(uuid);
+                return GLib.SOURCE_REMOVE;
+            });
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _updateAlignMarks(activeAlign) {
+        Object.entries(this._alignItems).forEach(([align, item]) => {
+            item.setOrnament(
+                align === activeAlign ? PopupMenu.Ornament.DOT : PopupMenu.Ornament.NONE
+            );
+        });
+    }
+
     // ── Menú: detalle de RAM ──
     _buildRamMenu() {
         this.menu.removeAll();
@@ -335,6 +471,9 @@ class RamIndicator extends PanelMenu.Button {
         this._menuTitle = new PopupMenu.PopupMenuItem('  RAM', { reactive: false });
         this._menuTitle.label.style = 'font-weight: bold;';
         this.menu.addMenuItem(this._menuTitle);
+
+        this._addConfigItem();
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
         this._menuBar   = new PopupMenu.PopupMenuItem('', { reactive: false });
         this._menuBar.label.style = 'font-family: monospace;';
@@ -371,6 +510,9 @@ class RamIndicator extends PanelMenu.Button {
         const header = new PopupMenu.PopupMenuItem('  Procesos activos', { reactive: false });
         header.label.style = 'font-weight: bold;';
         this.menu.addMenuItem(header);
+
+        this._addConfigItem();
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
     }
 
     _openProcessMenu() {
@@ -418,26 +560,28 @@ class RamIndicator extends PanelMenu.Button {
     }
 
     _buildProcessItem(group) {
-        // PopupSubMenuMenuItem expande/colapsa sin cerrar el menú principal:
-        // el clic derecho (o el hover) abre este menú, un primer clic
-        // despliega la confirmación y un segundo clic (sobre el ítem de
-        // confirmación) ejecuta el kill de todos los PID del grupo.
+        // Un clic cierra el menú y abre un diálogo modal de confirmación
+        // (mismo mecanismo que "Apagar" en GNOME): siempre queda centrado y
+        // visible, sin depender de que el menú tenga espacio para expandir
+        // una confirmación en línea.
         const count       = group.pids.length;
         const displayName = friendlyProcessName(group.name);
         const pctLabel    = this._fmtPctOfTotal(group.kb);
 
-        const item = new PopupMenu.PopupSubMenuMenuItem(
+        const item = new PopupMenu.PopupMenuItem(
             pctLabel ? `  ${displayName}  —  ${pctLabel}` : `  ${displayName}`);
-
-        const confirmText = count > 1
-            ? `  Terminar ${count} procesos de "${displayName}" (confirmar)`
-            : `  Terminar "${displayName}" (confirmar)`;
-        const confirmItem = new PopupMenu.PopupMenuItem(confirmText);
-        confirmItem.label.style = 'color: #f38ba8;';
-        confirmItem.connect('activate', () => this._killProcessGroup(group.pids, group.name));
-        item.menu.addMenuItem(confirmItem);
+        item.connect('activate', () => this._confirmAndKill(group, displayName, count));
 
         return item;
+    }
+
+    async _confirmAndKill(group, displayName, count) {
+        const text = count > 1
+            ? `¿Terminar ${count} procesos de "${displayName}"?`
+            : `¿Terminar "${displayName}"?`;
+        const confirmed = await confirmKillDialog(text);
+        if (!confirmed || this._destroyed) return;
+        this._killProcessGroup(group.pids, group.name);
     }
 
     // ── Matar proceso: SIGTERM, y si sigue vivo, SIGKILL ──
@@ -490,13 +634,69 @@ class RamIndicator extends PanelMenu.Button {
 // ── Extensión ──────────────────────────────────────────────────────────────
 export default class RamMonitorExtension extends Extension {
     enable() {
-        this._indicator = new RamIndicator();
-        // Añadir a la derecha del panel, antes de otros indicadores de sistema
-        Main.panel.addToStatusArea(this.uuid, this._indicator, 1, 'right');
+        const align    = this._loadPanelPosition();
+        const fontSize = this._loadFontSize();
+        this._indicator = new RamIndicator(this, align, fontSize);
+        // Antes de otros indicadores de sistema, en la posición guardada
+        // (por defecto: derecha, como siempre).
+        Main.panel.addToStatusArea(this.uuid, this._indicator, 1, align);
     }
 
     disable() {
         this._indicator?.destroy();
         this._indicator = null;
+    }
+
+    // ── Posición en barra ────────────────────────────────────────────────
+    _loadPanelPosition() {
+        try {
+            const file = Gio.File.new_for_path(POSITION_PATH);
+            const [, bytes] = file.load_contents(null);
+            const val = new TextDecoder().decode(bytes).trim();
+            return VALID_ALIGNS.includes(val) ? val : 'right';
+        } catch (_e) {}
+        return 'right';
+    }
+
+    savePanelPosition(align) {
+        try {
+            Gio.File.new_for_path(CONFIG_DIR).make_directory_with_parents(null);
+        } catch (_e) {}
+        try {
+            const file = Gio.File.new_for_path(POSITION_PATH);
+            file.replace_contents(
+                new TextEncoder().encode(align),
+                null, false,
+                Gio.FileCreateFlags.REPLACE_DESTINATION,
+                null
+            );
+        } catch (_e) {}
+    }
+
+    // ── Tamaño de letra ──────────────────────────────────────────────────
+    _loadFontSize() {
+        try {
+            const file = Gio.File.new_for_path(FONT_SIZE_PATH);
+            const [, bytes] = file.load_contents(null);
+            const val = parseInt(new TextDecoder().decode(bytes).trim(), 10);
+            if (Number.isInteger(val))
+                return Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, val));
+        } catch (_e) {}
+        return DEFAULT_FONT_SIZE;
+    }
+
+    saveFontSize(size) {
+        try {
+            Gio.File.new_for_path(CONFIG_DIR).make_directory_with_parents(null);
+        } catch (_e) {}
+        try {
+            const file = Gio.File.new_for_path(FONT_SIZE_PATH);
+            file.replace_contents(
+                new TextEncoder().encode(String(size)),
+                null, false,
+                Gio.FileCreateFlags.REPLACE_DESTINATION,
+                null
+            );
+        } catch (_e) {}
     }
 }
