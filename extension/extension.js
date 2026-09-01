@@ -487,6 +487,14 @@ class RamIndicator extends PanelMenu.Button {
         this.menu.addMenuItem(this._menuTotal);
 
         this._applyRamLabels(this._lastMem);
+        this._addHideItem();
+    }
+
+    // Oculta el indicador solo en memoria (sin tocar la config en disco):
+    // vuelve a aparecer normalmente en el próximo inicio de sesión.
+    _hideForSession() {
+        this.menu.close();
+        this.hide();
     }
 
     _applyRamLabels(m) {
@@ -522,6 +530,7 @@ class RamIndicator extends PanelMenu.Button {
 
         this._addProcessHeader();
         this.menu.addMenuItem(new PopupMenu.PopupMenuItem('  Cargando…', { reactive: false }));
+        this._addHideItem();
 
         const requestId = ++this._procRequestId;
         getProcesses().then(procs => {
@@ -539,15 +548,26 @@ class RamIndicator extends PanelMenu.Button {
         if (procs === null) {
             this.menu.addMenuItem(
                 new PopupMenu.PopupMenuItem('  Error al obtener procesos', { reactive: false }));
-            return;
-        }
-        if (procs.length === 0) {
+        } else if (procs.length === 0) {
             this.menu.addMenuItem(
                 new PopupMenu.PopupMenuItem('  Sin procesos relevantes', { reactive: false }));
-            return;
+        } else {
+            for (const group of procs)
+                this.menu.addMenuItem(this._buildProcessItem(group));
         }
-        for (const group of procs)
-            this.menu.addMenuItem(this._buildProcessItem(group));
+
+        this._addHideItem();
+    }
+
+    // Ítem para ocultar el indicador solo en memoria (sin tocar la config en
+    // disco): vuelve a aparecer normalmente en el próximo inicio de sesión.
+    // Compartido entre el menú de RAM y el de procesos (clic izq. / der.).
+    _addHideItem() {
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+
+        const hideItem = new PopupMenu.PopupMenuItem('🙈  Ocultar esta sesión');
+        hideItem.connect('activate', () => this._hideForSession());
+        this.menu.addMenuItem(hideItem);
     }
 
     // % de RAM que representa `kb` sobre el total del sistema (según la
