@@ -66,24 +66,24 @@ RAM usada = MemTotal - MemAvailable
 
 ## Menú desplegable
 
-Al hacer clic en el indicador se muestra el detalle:
+**Clic izquierdo** muestra los procesos activos ordenados por RAM, con la opción de cerrarlos:
 
 ```
-  RAM
-  █████░░░░░  43%
-  Usada        6.9 GB
-  Disponible   9.1 GB
-  Total       16.0 GB
+  Procesos activos
+  Vivaldi        —  12%
+  Spotify        —   4%
+  ...
 ```
+
+Al cerrar un proceso se pide confirmación mediante un diálogo modal centrado en pantalla (igual que "Apagar" en GNOME), así queda siempre visible y accesible sin importar el tamaño de la pantalla.
 
 ## Configuración (clic derecho)
 
-Tanto el menú de RAM como el de procesos incluyen una entrada **⚙ Configuración** con:
+**Clic derecho** abre el menú de configuración:
 
 - **Posición en barra** — izquierda, centro o derecha
 - **Tamaño de letra** — aumentar, reducir o restablecer
-
-Al cerrar un proceso se pide confirmación mediante un diálogo modal centrado en pantalla (igual que "Apagar" en GNOME), así queda siempre visible y accesible sin importar el tamaño de la pantalla.
+- **Ocultar esta sesión** — oculta el indicador hasta el próximo inicio de sesión
 
 ## Compatibilidad
 

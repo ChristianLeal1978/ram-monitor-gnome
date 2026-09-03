@@ -6,8 +6,8 @@
  * Panel:  ██████░░░░ 7.4/16G
  * Colores: verde (<60%) · amarillo (60-84%) · rojo (≥85%)
  *
- * Clic izquierdo  → detalle de RAM (Usada/Disponible/Total).
- * Clic derecho    → procesos activos ordenados por RAM, con opción de matarlos.
+ * Clic izquierdo  → procesos activos ordenados por RAM, con opción de matarlos.
+ * Clic derecho    → configuración (alineación, tamaño de letra, ocultar sesión).
  */
 
 import GLib    from 'gi://GLib';
@@ -248,7 +248,7 @@ class RamIndicator extends PanelMenu.Button {
         this._fontSizeItem    = null;
         this._alignItems      = {};
 
-        this._menuMode        = 'ram';   // 'ram' | 'processes'
+        this._menuMode        = 'processes';   // 'processes' | 'config'
         this._lastMem         = null;
         this._procRequestId   = 0;
         this._pendingSources  = new Set();
@@ -273,7 +273,7 @@ class RamIndicator extends PanelMenu.Button {
         box.add_child(this._infoLabel);
         this.add_child(box);
 
-        // ── Clic izquierdo → RAM · clic derecho → procesos ──
+        // ── Clic izquierdo → procesos · clic derecho → configuración ──
         // PanelMenu.Button trae un único Clutter.ClickGesture que abre el
         // menú con cualquier botón (required-button = 0). Lo desactivamos y
         // usamos dos gestos propios, uno por botón, cada uno fija el modo
@@ -284,30 +284,18 @@ class RamIndicator extends PanelMenu.Button {
         this._leftClickGesture = new Clutter.ClickGesture();
         this._leftClickGesture.set_required_button(Clutter.BUTTON_PRIMARY);
         this._leftClickGesture.set_recognize_on_press(true);
-        this._leftClickGesture.connect('recognize', () => this._activateMode('ram'));
+        this._leftClickGesture.connect('recognize', () => this._activateMode('processes'));
         this.add_action(this._leftClickGesture);
 
         this._rightClickGesture = new Clutter.ClickGesture();
         this._rightClickGesture.set_required_button(Clutter.BUTTON_SECONDARY);
         this._rightClickGesture.set_recognize_on_press(true);
-        this._rightClickGesture.connect('recognize', () => this._activateMode('processes'));
+        this._rightClickGesture.connect('recognize', () => this._activateMode('config'));
         this.add_action(this._rightClickGesture);
 
         this.menu.connect('open-state-changed', (_menu, open) => {
             if (open) this._populateMenu();
         });
-
-        // ── Pasar el mouse sobre el ícono también abre el listado de
-        // procesos, sin necesidad de clic derecho. El cierre queda a cargo
-        // de los mecanismos propios de GNOME (clic afuera, Escape, o clic
-        // de nuevo en el ícono): un cierre automático por "salida de hover"
-        // resultó poco fiable, porque el menú recién abierto no queda
-        // marcado como hovered hasta el primer movimiento del mouse sobre
-        // él, así que se cerraba solo apenas se abría.
-        this.connect('notify::hover', () => this._onIndicatorHoverChanged());
-
-        // ── Menú desplegable (contenido inicial: detalle de RAM) ──
-        this._buildRamMenu();
 
         // ── Arrancar ──
         this._refresh();
@@ -334,9 +322,6 @@ class RamIndicator extends PanelMenu.Button {
         this._barLabel.set_text(bar);
         this._infoLabel.set_text(` ${used}/${total}G`);
         this._applyPanelStyle(m);
-
-        // ── Menú (solo si está mostrando el detalle de RAM) ──
-        this._applyRamLabels(m);
     }
 
     _applyPanelStyle(m) {
@@ -363,27 +348,22 @@ class RamIndicator extends PanelMenu.Button {
     _populateMenu() {
         if (this._menuMode === 'processes')
             this._openProcessMenu();
-        else if (!this._menuBar)
-            this._buildRamMenu();
+        else
+            this._buildConfigMenu();
     }
 
-    _onIndicatorHoverChanged() {
-        if (!this.hover) return;
+    // ── Menú: configuración (clic derecho) — alineación, tamaño de letra
+    // y ocultar sesión, mismo patrón que el resto de Powerzoid ──
+    _buildConfigMenu() {
+        this.menu.removeAll();
 
-        if (!this.menu.isOpen) {
-            this._menuMode = 'processes';
-            this.menu.open();
-        } else if (this._menuMode !== 'processes') {
-            this._menuMode = 'processes';
-            this._populateMenu();
-        }
-    }
+        const title = new PopupMenu.PopupMenuItem('  Configuración', { reactive: false });
+        title.label.style = 'font-weight: bold;';
+        this.menu.addMenuItem(title);
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
-    // ── Menú: alineación y tamaño de letra (mismo patrón que el resto de
-    // Powerzoid) ──
-    _addConfigItem() {
-        const configItem = new PopupMenu.PopupSubMenuMenuItem('⚙  Configuración');
-        this.menu.addMenuItem(configItem);
+        const posSubMenu = new PopupMenu.PopupSubMenuMenuItem('Posición en barra');
+        this.menu.addMenuItem(posSubMenu);
 
         this._alignItems = {};
         [
@@ -394,23 +374,23 @@ class RamIndicator extends PanelMenu.Button {
             const item = new PopupMenu.PopupMenuItem(label);
             this._alignItems[align] = item;
             item.connect('activate', () => this._setAlignment(align));
-            configItem.menu.addMenuItem(item);
+            posSubMenu.menu.addMenuItem(item);
         });
         this._updateAlignMarks(this._currentAlign);
 
-        configItem.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
         this._fontSizeItem = new PopupMenu.PopupMenuItem(this._fontSizeLabel(), { reactive: false });
         this._fontSizeItem.label.set_style('color: #aaa; font-style: italic;');
-        configItem.menu.addMenuItem(this._fontSizeItem);
+        this.menu.addMenuItem(this._fontSizeItem);
 
         const increaseItem = new PopupMenu.PopupMenuItem('A+   Aumentar letra');
         increaseItem.connect('activate', () => this._changeFontSize(1));
-        configItem.menu.addMenuItem(increaseItem);
+        this.menu.addMenuItem(increaseItem);
 
         const decreaseItem = new PopupMenu.PopupMenuItem('A−   Reducir letra');
         decreaseItem.connect('activate', () => this._changeFontSize(-1));
-        configItem.menu.addMenuItem(decreaseItem);
+        this.menu.addMenuItem(decreaseItem);
 
         const resetItem = new PopupMenu.PopupMenuItem('↺    Restablecer tamaño');
         resetItem.connect('activate', () => {
@@ -418,7 +398,9 @@ class RamIndicator extends PanelMenu.Button {
             this._applyFontSize();
             this._ext.saveFontSize(this._fontSize);
         });
-        configItem.menu.addMenuItem(resetItem);
+        this.menu.addMenuItem(resetItem);
+
+        this._addHideItem();
     }
 
     _fontSizeLabel() {
@@ -464,32 +446,6 @@ class RamIndicator extends PanelMenu.Button {
         });
     }
 
-    // ── Menú: detalle de RAM ──
-    _buildRamMenu() {
-        this.menu.removeAll();
-
-        this._menuTitle = new PopupMenu.PopupMenuItem('  RAM', { reactive: false });
-        this._menuTitle.label.style = 'font-weight: bold;';
-        this.menu.addMenuItem(this._menuTitle);
-
-        this._addConfigItem();
-        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-
-        this._menuBar   = new PopupMenu.PopupMenuItem('', { reactive: false });
-        this._menuBar.label.style = 'font-family: monospace;';
-        this.menu.addMenuItem(this._menuBar);
-
-        this._menuUsed  = new PopupMenu.PopupMenuItem('', { reactive: false });
-        this._menuAvail = new PopupMenu.PopupMenuItem('', { reactive: false });
-        this._menuTotal = new PopupMenu.PopupMenuItem('', { reactive: false });
-        this.menu.addMenuItem(this._menuUsed);
-        this.menu.addMenuItem(this._menuAvail);
-        this.menu.addMenuItem(this._menuTotal);
-
-        this._applyRamLabels(this._lastMem);
-        this._addHideItem();
-    }
-
     // Oculta el indicador solo en memoria (sin tocar la config en disco):
     // vuelve a aparecer normalmente en el próximo inicio de sesión.
     _hideForSession() {
@@ -497,36 +453,16 @@ class RamIndicator extends PanelMenu.Button {
         this.hide();
     }
 
-    _applyRamLabels(m) {
-        if (!m || !this._menuBar) return;
-
-        const color = colorFor(m.pct);
-        const bar   = makeBar(m.pct);
-        const used  = fmtGb(m.used_gb);
-        const total = fmtGb(m.total_gb);
-        const avail = fmtGb(m.avail_gb);
-
-        this._menuBar.label.set_text(`  ${bar}  ${m.pct}%`);
-        this._menuBar.label.set_style(`font-family: monospace; color: ${color};`);
-        this._menuUsed.label.set_text(`  Usada      ${used} GB`);
-        this._menuAvail.label.set_text(`  Disponible ${avail} GB`);
-        this._menuTotal.label.set_text(`  Total      ${total} GB`);
-    }
-
     // ── Menú: procesos activos ──
     _addProcessHeader() {
         const header = new PopupMenu.PopupMenuItem('  Procesos activos', { reactive: false });
         header.label.style = 'font-weight: bold;';
         this.menu.addMenuItem(header);
-
-        this._addConfigItem();
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
     }
 
     _openProcessMenu() {
         this.menu.removeAll();
-        this._menuTitle = this._menuBar = this._menuUsed =
-            this._menuAvail = this._menuTotal = null;
 
         this._addProcessHeader();
         this.menu.addMenuItem(new PopupMenu.PopupMenuItem('  Cargando…', { reactive: false }));
@@ -561,7 +497,8 @@ class RamIndicator extends PanelMenu.Button {
 
     // Ítem para ocultar el indicador solo en memoria (sin tocar la config en
     // disco): vuelve a aparecer normalmente en el próximo inicio de sesión.
-    // Compartido entre el menú de RAM y el de procesos (clic izq. / der.).
+    // Compartido entre el menú de procesos y el de configuración (clic
+    // izq. / der.).
     _addHideItem() {
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
