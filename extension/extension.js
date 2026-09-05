@@ -274,28 +274,49 @@ class RamIndicator extends PanelMenu.Button {
         this.add_child(box);
 
         // ── Clic izquierdo → procesos · clic derecho → configuración ──
-        // PanelMenu.Button trae un único Clutter.ClickGesture que abre el
-        // menú con cualquier botón (required-button = 0). Lo desactivamos y
-        // usamos dos gestos propios, uno por botón, cada uno fija el modo
-        // del menú antes de abrirlo (o de repoblarlo si ya estaba abierto
-        // en el otro modo) para que siempre muestre el contenido correcto.
-        this._clickGesture?.set_enabled(false);
+        // Se maneja en la fase de captura ('captured-event'): la señal
+        // clásica 'button-press-event' nunca llega a dispararse en esta
+        // versión de GNOME Shell (ni tampoco el gesto de clic por defecto
+        // de PanelMenu.Button, ni gestos Clutter.ClickGesture propios),
+        // pero 'captured-event' sí recibe el BUTTON_PRESS de forma fiable.
+        this.connect('captured-event', (_actor, event) => {
+            if (event.type() !== Clutter.EventType.BUTTON_PRESS)
+                return Clutter.EVENT_PROPAGATE;
 
-        this._leftClickGesture = new Clutter.ClickGesture();
-        this._leftClickGesture.set_required_button(Clutter.BUTTON_PRIMARY);
-        this._leftClickGesture.set_recognize_on_press(true);
-        this._leftClickGesture.connect('recognize', () => this._activateMode('processes'));
-        this.add_action(this._leftClickGesture);
+            const button = event.get_button();
+            const mode = button === Clutter.BUTTON_SECONDARY ? 'config' : 'processes';
 
-        this._rightClickGesture = new Clutter.ClickGesture();
-        this._rightClickGesture.set_required_button(Clutter.BUTTON_SECONDARY);
-        this._rightClickGesture.set_recognize_on_press(true);
-        this._rightClickGesture.connect('recognize', () => this._activateMode('config'));
-        this.add_action(this._rightClickGesture);
+            // Se difiere al próximo ciclo de inactividad: abrir/cerrar el
+            // menú en el mismo tick en que todavía se está procesando el
+            // evento de clic (fase de captura) interfiere con el propio
+            // mecanismo de apertura de PopupMenu (mismo patrón que usa el
+            // resto de Powerzoid para esto).
+            GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+                if (this._destroyed) return GLib.SOURCE_REMOVE;
+
+                if (this.menu.isOpen && this._menuMode === mode) {
+                    this.menu.close();
+                } else {
+                    this._menuMode = mode;
+                    if (this.menu.isOpen)
+                        this._populateMenu();
+                    else
+                        this.menu.open();
+                }
+                return GLib.SOURCE_REMOVE;
+            });
+            return Clutter.EVENT_STOP;
+        });
 
         this.menu.connect('open-state-changed', (_menu, open) => {
             if (open) this._populateMenu();
         });
+
+        // Construcción inicial sincrónica: un PopupMenu completamente vacío
+        // (sin ítems todavía) parece negarse a abrir la primera vez —
+        // nunca llega a emitir 'open-state-changed' — así que se precarga
+        // con contenido antes de que exista la posibilidad de un clic.
+        this._populateMenu();
 
         // ── Arrancar ──
         this._refresh();
@@ -330,19 +351,6 @@ class RamIndicator extends PanelMenu.Button {
             `color: ${color}; font-family: monospace; letter-spacing: 0px; font-size: ${this._fontSize}px;`
         );
         this._infoLabel.set_style(`color: ${color}; font-size: ${this._fontSize}px;`);
-    }
-
-    // ── Apertura / cambio de modo del menú ──
-    _activateMode(mode) {
-        if (this.menu.isOpen && this._menuMode === mode) {
-            this.menu.close();
-            return;
-        }
-        this._menuMode = mode;
-        if (this.menu.isOpen)
-            this._populateMenu();   // ya abierto en el otro modo: solo repoblar
-        else
-            this.menu.open();       // dispara open-state-changed → _populateMenu()
     }
 
     _populateMenu() {
